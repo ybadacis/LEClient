@@ -258,4 +258,107 @@ class LEFunctions
 			. '</ifModule>' . "\n";
 		file_put_contents($directory . '.htaccess', $htaccess);
 	}
+
+    /**
+     * Computes the ARI CertID for a certificate (RFC 9773 4.1):
+     * base64url(Authority Key Identifier) . '.' . base64url(serial number)
+     *
+     * @param string $certPem PEM encoded LEAF certificate (not the full chain).
+     * @return string
+     */
+    public static function getARICertId(string $certPem)
+    {
+        if (version_compare(PHP_VERSION, '7.1.2', '<')) {
+            throw new Exception('PHP Version >= 7.1.2 required for ARI'); // serialNumberHex - https://github.com/php/php-src/pull/1755
+        }
+
+        $info = LEFunctions::parseCertificate($certPem);
+
+        if (!isset($info['extensions']['authorityKeyIdentifier'])) {
+            throw new Exception('authorityKeyIdentifier missing');
+        }
+
+        $aki = trim($info['extensions']['authorityKeyIdentifier']);
+        if (stripos($aki, 'keyid') === 0) {
+            $aki = substr($aki, 5);
+        }
+
+        $aki = hex2bin(str_replace(':', '', $aki));
+        if (!$aki) {
+            throw new Exception('Failed to parse authorityKeyIdentifier');
+        }
+
+        if (!isset($info['serialNumberHex'])) {
+            throw new Exception('serialNumberHex missing');
+        }
+        
+        $ser = hex2bin(trim($info['serialNumberHex']));
+        if (!$ser) {
+            throw new Exception('Failed to parse serialNumberHex');
+        }
+        if (ord($ser[0]) & 0x80) {
+            $ser = "\x00" . $ser;
+        }
+
+        return self::Base64UrlSafeEncode($aki) . '.' . self::Base64UrlSafeEncode($ser);
+    }
+
+    public static function parseCertificate(string $certPem): array
+    {
+        $info = openssl_x509_read($certPem);
+        if (false === $info) {
+            throw new Exception('Could not load certificate: ' . $certPem . ' (' . $this->get_openssl_error() . ')');
+        }
+
+        $info = openssl_x509_parse($info, true);
+        if (!is_array($info)) {
+            throw new Exception('Could not parse certificate (' . $this->get_openssl_error() . ')');
+        }
+
+        return $info;
+    }
+
+    public static function getRetryAfterHeader(array $headers): ?int {
+        $retryAfter = $headers['retry-after'];
+        if(null === $retryAfter) {
+            return null;
+        }
+
+		if (is_numeric($retryAfter)){
+			return (int) $retryAfter;
+		}
+
+		$ts = strtotime($retryAfter);
+
+        return $ts === false ? null : max(0, $ts - time());
+	}
+
+    public static function parseStringHeaderToArray(string $header): array
+    {
+        $headers = explode("\r\n", $header);
+
+         // Skip HTTP responseCode
+        array_shift($headers);
+
+        // Split headers with header name and multiple values, like Set-Cookie
+        $headers = array_reduce($headers, function ($accumulator, $header) {
+            $content = explode(': ', $header, 2);
+    
+            if(count($content) === 2) {
+                [$name, $value] = $content;
+
+                $accumulator[strtolower($name)][] = $value; 
+            }
+
+            return $accumulator;
+        }, []);
+
+        foreach($headers as $name => $value) {
+            if(count($value) === 1) {
+                $headers[$name] = $value[0];
+            }
+        }
+
+        return $headers;
+    } 
 }

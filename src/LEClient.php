@@ -51,6 +51,7 @@ class LEClient
 	private $sourceIp = false;
 
 	private $log;
+    private $baseUrl;
 
 	const LOG_OFF = 0;		// Logs no messages or faults, except Runtime Exceptions.
 	const LOG_STATUS = 1;	// Logs only messages and faults.
@@ -198,9 +199,9 @@ class LEClient
      *
      * @return LEOrder	The LetsEncrypt Order instance which is either retrieved or created.
      */
-	public function getOrCreateOrder($basename, $domains, $keyType = 'rsa-4096', $notBefore = '', $notAfter = '', bool $skipOrderValidation = false)
+	public function getOrCreateOrder($basename, $domains, $keyType = 'rsa-4096', $notBefore = '', $notAfter = '', bool $skipOrderValidation = false, ?string $ariCertId = null)
 	{
-		return new LEOrder($this->connector, $this->log, $this->certificateKeys, $basename, $domains, $keyType, $notBefore, $notAfter, $skipOrderValidation);
+		return new LEOrder($this->connector, $this->log, $this->certificateKeys, $basename, $domains, $keyType, $notBefore, $notAfter, $skipOrderValidation, $ariCertId);
 	}
 
     /**
@@ -258,5 +259,61 @@ class LEClient
         }
 
         return false;
+    }
+
+    /**
+     * Get ACME Renewal Information (ARI, RFC 9773) for a given certificate.
+     * Does not require an order, and is not signed (per protocol).
+     *
+     * @param string $certPem PEM encoded leaf certificate
+     *
+     * @return array{
+     *      'suggestedWindow': array{
+     *          'start': int,
+     *          'end': int,
+     *      },
+     *      'retryAfter': ?int,
+     *      'ariCertId': string
+     * }
+     */
+    public function getARI(): array
+    {
+        if (!$this->connector->supportsAri()) {
+            throw new \RuntimeException('This ACME server does not support ARI.');
+        }
+
+        $certFile = '';
+
+        if (isset($this->certificateKeys['certificate']) && file_exists($this->certificateKeys['certificate'])) {
+            $certFile = $this->certificateKeys['certificate'];
+        } else {
+            throw new \Exception('ARI certificateKeys[certificate] required');
+        }
+
+        $certificate = file_get_contents($this->certificateKeys['certificate']);
+        
+        $certId = LEFunctions::getARICertId($certificate);
+
+        $result = $this->connector->get($this->connector->renewalInfo . '/' . $certId);
+
+        $data = $result['body'];
+        if (!is_array($data) || !isset($data['suggestedWindow'])) {
+            throw new \Exception('Cartificate invalid ARI response: ' . $result['body']);
+        }
+
+        $suggestedWindow = $data['suggestedWindow'];
+        if (!isset($suggestedWindow['start'])) {
+            throw new Exception('Certificate ARI suggestedWindow start not present');
+        }
+		if (!isset($suggestedWindow['end'])) {
+            throw new Exception('ARI suggestedWindow end not present');
+        }
+
+        $data['suggestedWindow']['start'] = strtotime($suggestedWindow['start']);
+        $data['suggestedWindow']['end'] = strtotime($suggestedWindow['end']);
+        $data['retryAfter'] = LEFunctions::getRetryAfterHeader($result['parsedHeader']);
+        $data['ariCertId'] = $certId;
+
+        return $data;
     }
 }

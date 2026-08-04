@@ -49,6 +49,7 @@ class LEConnector
     public $newNonce;
 	public $newOrder;
 	public $revokeCert;
+    public ?string $renewalInfo;
 	public $externalAccountRequired;
 
 	public $accountURL;
@@ -88,6 +89,8 @@ class LEConnector
 		$this->newNonce = $req['body']['newNonce'];
 		$this->newOrder = $req['body']['newOrder'];
 		$this->revokeCert = $req['body']['revokeCert'];
+        $this->renewalInfo = $req['body']['renewalInfo'] ?? null;
+
         if (isset($req['body']['meta']['externalAccountRequired']) && (strtolower($req['body']['meta']['externalAccountRequired']) === "true" )) {
             $this->externalAccountRequired = true;
         }
@@ -150,13 +153,15 @@ class LEConnector
         $statusCode = curl_getinfo($handle, CURLINFO_HTTP_CODE);
 
         $header = substr($response, 0, $headerSize);
+        
         $body = substr($response, $headerSize);
 		$jsonbody = json_decode($body, true);
 		$jsonresponse = array(
            		'request' => $method . ' ' . $requestURL,
-            		'header' => $header,
-            		'status' => $statusCode,
-            		'body' => $jsonbody === null ? $body : $jsonbody,
+            	'header' => $header,
+                'parsedHeader' => LEFunctions::parseStringHeaderToArray($header),
+            	'status' => $statusCode,
+            	'body' => $jsonbody === null ? $body : $jsonbody,
         	);
 		if($this->log instanceof \Psr\Log\LoggerInterface) 
 		{
@@ -318,5 +323,10 @@ class LEConnector
         );
 
         return json_encode($data);
+    }
+
+    public function supportsAri(): bool
+    {
+        return $this->renewalInfo !== null;
     }
 }

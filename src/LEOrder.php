@@ -226,15 +226,29 @@ class LEOrder
      * @param string 	$notBefore 	A date string formatted like 0000-00-00T00:00:00Z (yyyy-mm-dd hh:mm:ss) at which the certificate becomes valid.
      * @param string 	$notAfter 	A date string formatted like 0000-00-00T00:00:00Z (yyyy-mm-dd hh:mm:ss) until which the certificate is valid.
      */
-    private function createOrder($domains, $notBefore, $notAfter)
+    private function createOrder(array $domains, string $notBefore, string $notAfter, ?string $ariCertId = null)
     {
-        $dns = array();
-        foreach($domains as $domain)
-        {
-            if(preg_match_all('~(\*\.)~', $domain) > 1) throw LEOrderException::InvalidArgumentException('Cannot create orders with multiple wildcards in one domain.');
-            $dns[] = array('type' => 'dns', 'value' => $domain);
+        $dns = [];
+
+        foreach($domains as $domain) {
+            if(preg_match_all('~(\*\.)~', $domain) > 1) {
+                throw LEOrderException::InvalidArgumentException('Cannot create orders with multiple wildcards in one domain.');
+            }
+            $dns[] = ['type' => 'dns', 'value' => $domain];
         }
-        $payload = array("identifiers" => $dns, 'notBefore' => $notBefore, 'notAfter' => $notAfter);
+
+        $payload = [
+            'identifiers' => $dns,
+            'notBefore'   => $notBefore,
+            'notAfter'    => $notAfter
+        ];
+
+        if($this->connector->supportsAri() && $ariCertId !== null) {
+            $payload['replaces'] = $ariCertId;
+
+            LEFunctions::log('CA supports ARI renewal');
+        }
+
         $sign = $this->connector->signRequestKid($payload, $this->connector->accountURL, $this->connector->newOrder);
         $post = $this->connector->post($this->connector->newOrder, $sign);
 
